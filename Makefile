@@ -57,7 +57,7 @@ hub-kubeconfig-secret: cluster-ip
 
 e2e-hub-kubeconfig-secret: cluster-ip
 	cp $(HUB_KUBECONFIG) e2e-hub-kubeconfig
-	$(KUBECTL) apply -f deploy/spoke/component_namespace.yaml --kubeconfig $(AGENT_KUBECONFIG)
+	$(KUBECTL) apply -f deploy/agent/component_namespace.yaml --kubeconfig $(AGENT_KUBECONFIG)
 	$(KUBECTL) config set clusters.$(HUB_KUBECONFIG_CONTEXT).server https://$(CLUSTER_IP) --kubeconfig e2e-hub-kubeconfig
 	$(KUBECTL) delete secret e2e-hub-kubeconfig-secret -n open-cluster-management-agent --ignore-not-found --kubeconfig $(AGENT_KUBECONFIG)
 	$(KUBECTL) create secret generic e2e-hub-kubeconfig-secret --from-file=kubeconfig=e2e-hub-kubeconfig -n open-cluster-management-agent --kubeconfig $(AGENT_KUBECONFIG)

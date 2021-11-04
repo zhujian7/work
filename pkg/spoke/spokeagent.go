@@ -18,6 +18,7 @@ import (
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
 	workclientset "open-cluster-management.io/api/client/work/clientset/versioned"
@@ -28,6 +29,7 @@ import (
 type WorkloadAgentOptions struct {
 	HubKubeconfigFile   string
 	SpokeKubeconfigFile string
+	SpokeKubeconfig     *rest.Config
 	SpokeClusterName    string
 	QPS                 float32
 	Burst               int
@@ -70,31 +72,33 @@ func (o *WorkloadAgentOptions) RunWorkloadAgent(ctx context.Context, controllerC
 
 	// load spoke client config and create spoke clients,
 	// the work agent may running not in the spoke/managed cluster.
-	spokeRestConfig, err := osclient.GetKubeConfigOrInClusterConfig(o.SpokeKubeconfigFile, nil)
-	if err != nil {
-		return fmt.Errorf("unable to load spoke kubeconfig from file %q: %w", o.SpokeKubeconfigFile, err)
+	if o.SpokeKubeconfig == nil {
+		o.SpokeKubeconfig, err = osclient.GetKubeConfigOrInClusterConfig(o.SpokeKubeconfigFile, nil)
+		if err != nil {
+			return fmt.Errorf("unable to load spoke kubeconfig from file %q: %w", o.SpokeKubeconfigFile, err)
+		}
 	}
 
-	spokeRestConfig.QPS = o.QPS
-	spokeRestConfig.Burst = o.Burst
-	spokeDynamicClient, err := dynamic.NewForConfig(spokeRestConfig)
+	o.SpokeKubeconfig.QPS = o.QPS
+	o.SpokeKubeconfig.Burst = o.Burst
+	spokeDynamicClient, err := dynamic.NewForConfig(o.SpokeKubeconfig)
 	if err != nil {
 		return err
 	}
-	spokeKubeClient, err := kubernetes.NewForConfig(spokeRestConfig)
+	spokeKubeClient, err := kubernetes.NewForConfig(o.SpokeKubeconfig)
 	if err != nil {
 		return err
 	}
-	spokeAPIExtensionClient, err := apiextensionsclient.NewForConfig(spokeRestConfig)
+	spokeAPIExtensionClient, err := apiextensionsclient.NewForConfig(o.SpokeKubeconfig)
 	if err != nil {
 		return err
 	}
-	spokeWorkClient, err := workclientset.NewForConfig(spokeRestConfig)
+	spokeWorkClient, err := workclientset.NewForConfig(o.SpokeKubeconfig)
 	if err != nil {
 		return err
 	}
 	spokeWorkInformerFactory := workinformers.NewSharedInformerFactory(spokeWorkClient, 5*time.Minute)
-	restMapper, err := apiutil.NewDynamicRESTMapper(spokeRestConfig, apiutil.WithLazyDiscovery)
+	restMapper, err := apiutil.NewDynamicRESTMapper(o.SpokeKubeconfig, apiutil.WithLazyDiscovery)
 	if err != nil {
 		return err
 	}
