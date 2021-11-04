@@ -20,6 +20,8 @@ HUB_KUBECONFIG?=$(KUBECONFIG)
 HUB_KUBECONFIG_CONTEXT?=$(shell $(KUBECTL) --kubeconfig $(HUB_KUBECONFIG) config current-context)
 SPOKE_KUBECONFIG?=$(KUBECONFIG)
 SPOKE_KUBECONFIG_CONTEXT?=$(shell $(KUBECTL) --kubeconfig $(SPOKE_KUBECONFIG) config current-context)
+AGENT_KUBECONFIG?=$(SPOKE_KUBECONFIG)
+AGENT_KUBECONFIG_CONTEXT?=$(shell $(KUBECTL) --kubeconfig $(AGENT_KUBECONFIG) config current-context)
 PWD=$(shell pwd)
 KUSTOMIZE?=$(PWD)/$(PERMANENT_TMP_GOPATH)/bin/kustomize
 KUSTOMIZE_VERSION?=v3.5.4
@@ -40,38 +42,41 @@ clean:
 
 cluster-ip:
 	$(KUBECTL) config use-context $(HUB_KUBECONFIG_CONTEXT) --kubeconfig $(HUB_KUBECONFIG)
-  	CLUSTER_IP?=$(shell $(KUBECTL) --kubeconfig $(HUB_KUBECONFIG) get svc kubernetes -n default -o jsonpath="{.spec.clusterIP}")
+	$(eval CLUSTER_IP?=$(shell $(KUBECTL) --kubeconfig $(HUB_KUBECONFIG) get svc kubernetes -n default -o jsonpath="{.spec.clusterIP}"))
 
 hub-kubeconfig-secret: cluster-ip
-	$(KUBECTL) config use-context $(SPOKE_KUBECONFIG_CONTEXT) --kubeconfig $(SPOKE_KUBECONFIG)
-	$(KUBECTL) apply -f deploy/spoke/component_namespace.yaml --kubeconfig $(SPOKE_KUBECONFIG)
-	$(KUBECTL) delete secret hub-kubeconfig-secret -n open-cluster-management-agent --ignore-not-found --kubeconfig $(SPOKE_KUBECONFIG)
+	$(KUBECTL) config use-context $(AGENT_KUBECONFIG_CONTEXT) --kubeconfig $(AGENT_KUBECONFIG)
+	$(KUBECTL) apply -f deploy/spoke/component_namespace.yaml --kubeconfig $(AGENT_KUBECONFIG)
+	$(KUBECTL) delete secret hub-kubeconfig-secret -n open-cluster-management-agent --ignore-not-found --kubeconfig $(AGENT_KUBECONFIG)
 	$(KUBECTL) config use-context $(HUB_KUBECONFIG_CONTEXT) --kubeconfig $(HUB_KUBECONFIG)
 	$(KUBECTL) config view --flatten --minify --kubeconfig $(HUB_KUBECONFIG) > hub-kubeconfig
-ifeq ($(HUB_KUBECONFIG), $(SPOKE_KUBECONFIG)) && ($(HUB_KUBECONFIG_CONTEXT), $(SPOKE_KUBECONFIG_CONTEXT))
-	$(KUBECTL) config set clusters.$(HUB_KUBECONFIG_CONTEXT).server https://$(CLUSTER_IP) --kubeconfig hub-kubeconfig
-endif
-	$(KUBECTL) config use-context $(SPOKE_KUBECONFIG_CONTEXT) --kubeconfig $(SPOKE_KUBECONFIG)
-	$(KUBECTL) create secret generic hub-kubeconfig-secret --from-file=kubeconfig=hub-kubeconfig -n open-cluster-management-agent --kubeconfig $(SPOKE_KUBECONFIG)
+
+	$(KUBECTL) config use-context $(AGENT_KUBECONFIG_CONTEXT) --kubeconfig $(AGENT_KUBECONFIG)
+	$(KUBECTL) create secret generic hub-kubeconfig-secret --from-file=kubeconfig=hub-kubeconfig -n open-cluster-management-agent --kubeconfig $(AGENT_KUBECONFIG)
 	$(RM) ./hub-kubeconfig
 
 e2e-hub-kubeconfig-secret: cluster-ip
 	cp $(HUB_KUBECONFIG) e2e-hub-kubeconfig
-	$(KUBECTL) apply -f deploy/spoke/component_namespace.yaml --kubeconfig $(SPOKE_KUBECONFIG)
+	$(KUBECTL) apply -f deploy/spoke/component_namespace.yaml --kubeconfig $(AGENT_KUBECONFIG)
 	$(KUBECTL) config set clusters.$(HUB_KUBECONFIG_CONTEXT).server https://$(CLUSTER_IP) --kubeconfig e2e-hub-kubeconfig
-	$(KUBECTL) delete secret e2e-hub-kubeconfig-secret -n open-cluster-management-agent --ignore-not-found --kubeconfig $(SPOKE_KUBECONFIG)
-	$(KUBECTL) create secret generic e2e-hub-kubeconfig-secret --from-file=kubeconfig=e2e-hub-kubeconfig -n open-cluster-management-agent --kubeconfig $(SPOKE_KUBECONFIG)
+	$(KUBECTL) delete secret e2e-hub-kubeconfig-secret -n open-cluster-management-agent --ignore-not-found --kubeconfig $(AGENT_KUBECONFIG)
+	$(KUBECTL) create secret generic e2e-hub-kubeconfig-secret --from-file=kubeconfig=e2e-hub-kubeconfig -n open-cluster-management-agent --kubeconfig $(AGENT_KUBECONFIG)
 	$(RM) ./e2e-hub-kubeconfig
 
 create-cluster-ns:
 	$(KUSTOMIZE) build deploy/hub | $(KUBECTL) --kubeconfig $(HUB_KUBECONFIG) apply -f -
 
-deploy-work-agent: ensure-kustomize create-cluster-ns hub-kubeconfig-secret
-	cp deploy/spoke/kustomization.yaml deploy/spoke/kustomization.yaml.tmp
-	cd deploy/spoke && $(KUSTOMIZE) edit set image quay.io/open-cluster-management/work:latest=$(IMAGE_NAME)
+# ensure-kustomize create-cluster-ns hub-kubeconfig-secret
+deploy-work-agent:
+	cp deploy/agent/kustomization.yaml deploy/agent/kustomization.yaml.tmp
+	cd deploy/agent && $(KUSTOMIZE) edit set image quay.io/open-cluster-management/work:latest=$(IMAGE_NAME)
+	$(KUBECTL) config use-context $(AGENT_KUBECONFIG_CONTEXT) --kubeconfig $(AGENT_KUBECONFIG)
+	$(KUSTOMIZE) build deploy/agent | $(KUBECTL) --kubeconfig $(AGENT_KUBECONFIG) apply -f -
+	mv deploy/agent/kustomization.yaml.tmp deploy/agent/kustomization.yaml
+
+deploy-spoke-crd:
 	$(KUBECTL) config use-context $(SPOKE_KUBECONFIG_CONTEXT) --kubeconfig $(SPOKE_KUBECONFIG)
 	$(KUSTOMIZE) build deploy/spoke | $(KUBECTL) --kubeconfig $(SPOKE_KUBECONFIG) apply -f -
-	mv deploy/spoke/kustomization.yaml.tmp deploy/spoke/kustomization.yaml
 
 deploy-webhook: ensure-kustomize
 	cp deploy/webhook/kustomization.yaml deploy/webhook/kustomization.yaml.tmp
@@ -81,20 +86,24 @@ deploy-webhook: ensure-kustomize
 	mv deploy/webhook/kustomization.yaml.tmp deploy/webhook/kustomization.yaml
 
 clean-work-agent:
+	$(KUBECTL) config use-context $(AGENT_KUBECONFIG_CONTEXT) --kubeconfig $(AGENT_KUBECONFIG)
+	$(KUSTOMIZE) build deploy/agent | $(KUBECTL) --kubeconfig $(AGENT_KUBECONFIG) delete --ignore-not-found -f -
+
+clean-spoke-crd:
 	$(KUBECTL) config use-context $(SPOKE_KUBECONFIG_CONTEXT) --kubeconfig $(SPOKE_KUBECONFIG)
 	$(KUSTOMIZE) build deploy/spoke | $(KUBECTL) --kubeconfig $(SPOKE_KUBECONFIG) delete --ignore-not-found -f -
 
 clean-webhook:
 	$(KUBECTL) config use-context $(HUB_KUBECONFIG_CONTEXT) --kubeconfig $(HUB_KUBECONFIG)
-	$(KUSTOMIZE) build deploy/webhook | $(KUBECTL) --kubeconfig $(SPOKE_KUBECONFIG) delete --ignore-not-found -f -
+	$(KUSTOMIZE) build deploy/webhook | $(KUBECTL) --kubeconfig $(AGENT_KUBECONFIG) delete --ignore-not-found -f -
 
 remove-cluster-ns:
 	$(KUBECTL) config use-context $(HUB_KUBECONFIG_CONTEXT) --kubeconfig $(HUB_KUBECONFIG)
 	$(KUSTOMIZE) build deploy/hub | $(KUBECTL) --kubeconfig $(HUB_KUBECONFIG) delete --ignore-not-found -f -
 
-deploy: deploy-webhook deploy-work-agent
+deploy: deploy-webhook deploy-spoke-crd deploy-work-agent
 
-undeploy: remove-cluster-ns clean-work-agent clean-webhook
+undeploy: remove-cluster-ns clean-spoke-crd clean-work-agent clean-webhook
 
 ensure-kustomize:
 ifeq "" "$(wildcard $(KUSTOMIZE))"

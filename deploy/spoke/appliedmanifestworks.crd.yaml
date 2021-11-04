@@ -1,3 +1,5 @@
+# This CRD should be deployed into spoke/managed cluster even if
+# the work-agent deployed in an agent cluster separated from the spoke/managed cluster
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
