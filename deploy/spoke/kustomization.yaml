@@ -1,5 +1,11 @@
 resources:
 - ./appliedmanifestworks.crd.yaml
+- ./appliedmanifestworks.crd.yaml
+- ./component_namespace.yaml
+- ./service_account.yaml
+- ./clusterrole.yaml
+- ./clusterrole_binding.yaml
+- ./clusterrole_binding_addition.yaml
 
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

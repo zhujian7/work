@@ -12,7 +12,6 @@ import (
 	"open-cluster-management.io/work/pkg/spoke/controllers/statuscontroller"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 
-	osclient "github.com/openshift/library-go/pkg/config/client"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/spf13/cobra"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
@@ -73,9 +72,13 @@ func (o *WorkloadAgentOptions) RunWorkloadAgent(ctx context.Context, controllerC
 	// load spoke client config and create spoke clients,
 	// the work agent may running not in the spoke/managed cluster.
 	if o.SpokeKubeconfig == nil {
-		o.SpokeKubeconfig, err = osclient.GetKubeConfigOrInClusterConfig(o.SpokeKubeconfigFile, nil)
-		if err != nil {
-			return fmt.Errorf("unable to load spoke kubeconfig from file %q: %w", o.SpokeKubeconfigFile, err)
+		if o.SpokeKubeconfigFile != "" {
+			o.SpokeKubeconfig, err = clientcmd.BuildConfigFromFlags("" /* leave masterurl as empty */, o.SpokeKubeconfigFile)
+			if err != nil {
+				return fmt.Errorf("unable to load spoke kubeconfig from file %q: %w", o.SpokeKubeconfigFile, err)
+			}
+		} else {
+			o.SpokeKubeconfig = controllerContext.KubeConfig
 		}
 	}
 

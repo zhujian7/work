@@ -23,7 +23,7 @@ spec:
           - "/work"
           - "agent"
           - "--spoke-cluster-name=cluster1"
-          # - "--spoke-kubeconfig=/spoke/config/kubeconfig"
+          - "--spoke-kubeconfig=/spoke/config/kubeconfig"
           - "--hub-kubeconfig=/spoke/hub-kubeconfig/kubeconfig"
         securityContext:
           allowPrivilegeEscalation: false
@@ -36,13 +36,13 @@ spec:
         - name: hub-kubeconfig-secret
           mountPath: "/spoke/hub-kubeconfig"
           readOnly: true
-        # - name: spoke-kubeconfig-secret
-        #   mountPath: "/spoke/config"
-        #   readOnly: true
+        - name: spoke-kubeconfig-secret
+          mountPath: "/spoke/config"
+          readOnly: true
       volumes:
       - name: hub-kubeconfig-secret
         secret:
           secretName: hub-kubeconfig-secret
-      # - name: spoke-kubeconfig-secret
-      #   secret:
-      #     secretName: spoke-kubeconfig-secret
+      - name: spoke-kubeconfig-secret
+        secret:
+          secretName: spoke-kubeconfig-secret

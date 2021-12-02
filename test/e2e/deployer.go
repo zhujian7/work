@@ -34,13 +34,13 @@ import (
 var (
 	staticResourceFiles = []string{
 		"spoke/appliedmanifestworks.crd.yaml",
-		"agent/clusterrole.yaml",
-		"agent/component_namespace.yaml",
-		"agent/service_account.yaml",
-		"agent/clusterrole_binding.yaml",
-		"agent/clusterrole_binding_addition.yaml",
+		"spoke/agent/clusterrole.yaml",
+		"spoke/agent/component_namespace.yaml",
+		"spoke/agent/service_account.yaml",
+		"spoke/agent/clusterrole_binding.yaml",
+		"spoke/agent/clusterrole_binding_addition.yaml",
 	}
-	deploymentFile            = "agent/deployment.yaml"
+	deploymentFile            = "spoke/agent/deployment.yaml"
 	hubKubeconfigSecret       = "hub-kubeconfig-secret"
 	defaultComponentNamespace = "open-cluster-management-agent"
 )

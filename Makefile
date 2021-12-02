@@ -18,8 +18,10 @@ IMAGE_NAME?=$(IMAGE_REGISTRY)/work:$(IMAGE_TAG)
 KUBECONFIG?=./.kubeconfig
 HUB_KUBECONFIG?=$(KUBECONFIG)
 HUB_KUBECONFIG_CONTEXT?=$(shell $(KUBECTL) --kubeconfig $(HUB_KUBECONFIG) config current-context)
+# SPOKE_KUBECONFIG represents the kubeconfig for the managed/spoke cluster.
 SPOKE_KUBECONFIG?=$(KUBECONFIG)
 SPOKE_KUBECONFIG_CONTEXT?=$(shell $(KUBECTL) --kubeconfig $(SPOKE_KUBECONFIG) config current-context)
+# AGENT_KUBECONFIG represents the kubeconfig for the cluster where the work-agent runs on.
 AGENT_KUBECONFIG?=$(SPOKE_KUBECONFIG)
 AGENT_KUBECONFIG_CONTEXT?=$(shell $(KUBECTL) --kubeconfig $(AGENT_KUBECONFIG) config current-context)
 PWD=$(shell pwd)
@@ -57,7 +59,7 @@ hub-kubeconfig-secret: cluster-ip
 
 e2e-hub-kubeconfig-secret: cluster-ip
 	cp $(HUB_KUBECONFIG) e2e-hub-kubeconfig
-	$(KUBECTL) apply -f deploy/agent/component_namespace.yaml --kubeconfig $(AGENT_KUBECONFIG)
+	$(KUBECTL) apply -f deploy/spoke/agent/component_namespace.yaml --kubeconfig $(AGENT_KUBECONFIG)
 	$(KUBECTL) config set clusters.$(HUB_KUBECONFIG_CONTEXT).server https://$(CLUSTER_IP) --kubeconfig e2e-hub-kubeconfig
 	$(KUBECTL) delete secret e2e-hub-kubeconfig-secret -n open-cluster-management-agent --ignore-not-found --kubeconfig $(AGENT_KUBECONFIG)
 	$(KUBECTL) create secret generic e2e-hub-kubeconfig-secret --from-file=kubeconfig=e2e-hub-kubeconfig -n open-cluster-management-agent --kubeconfig $(AGENT_KUBECONFIG)
@@ -68,11 +70,11 @@ create-cluster-ns:
 
 # ensure-kustomize create-cluster-ns hub-kubeconfig-secret
 deploy-work-agent:
-	cp deploy/agent/kustomization.yaml deploy/agent/kustomization.yaml.tmp
-	cd deploy/agent && $(KUSTOMIZE) edit set image quay.io/open-cluster-management/work:latest=$(IMAGE_NAME)
+	cp deploy/spoke/agent/kustomization.yaml deploy/spoke/agent/kustomization.yaml.tmp
+	cd deploy/spoke/agent && $(KUSTOMIZE) edit set image quay.io/open-cluster-management/work:latest=$(IMAGE_NAME)
 	$(KUBECTL) config use-context $(AGENT_KUBECONFIG_CONTEXT) --kubeconfig $(AGENT_KUBECONFIG)
-	$(KUSTOMIZE) build deploy/agent | $(KUBECTL) --kubeconfig $(AGENT_KUBECONFIG) apply -f -
-	mv deploy/agent/kustomization.yaml.tmp deploy/agent/kustomization.yaml
+	$(KUSTOMIZE) build deploy/spoke/agent | $(KUBECTL) --kubeconfig $(AGENT_KUBECONFIG) apply -f -
+	mv deploy/spoke/agent/kustomization.yaml.tmp deploy/spoke/agent/kustomization.yaml
 
 deploy-spoke-crd:
 	$(KUBECTL) config use-context $(SPOKE_KUBECONFIG_CONTEXT) --kubeconfig $(SPOKE_KUBECONFIG)
@@ -87,7 +89,7 @@ deploy-webhook: ensure-kustomize
 
 clean-work-agent:
 	$(KUBECTL) config use-context $(AGENT_KUBECONFIG_CONTEXT) --kubeconfig $(AGENT_KUBECONFIG)
-	$(KUSTOMIZE) build deploy/agent | $(KUBECTL) --kubeconfig $(AGENT_KUBECONFIG) delete --ignore-not-found -f -
+	$(KUSTOMIZE) build deploy/spoke/agent | $(KUBECTL) --kubeconfig $(AGENT_KUBECONFIG) delete --ignore-not-found -f -
 
 clean-spoke-crd:
 	$(KUBECTL) config use-context $(SPOKE_KUBECONFIG_CONTEXT) --kubeconfig $(SPOKE_KUBECONFIG)
