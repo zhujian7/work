@@ -30,6 +30,7 @@ import (
 
 	"open-cluster-management.io/work/pkg/helper"
 	"open-cluster-management.io/work/pkg/spoke/apply"
+	"open-cluster-management.io/work/pkg/spoke/auth"
 	"open-cluster-management.io/work/pkg/spoke/controllers"
 )
 
@@ -46,6 +47,7 @@ type ManifestWorkController struct {
 	hubHash                   string
 	restMapper                meta.RESTMapper
 	appliers                  *apply.Appliers
+	validator                 auth.ExecutorValidator
 }
 
 type applyResult struct {
@@ -78,8 +80,8 @@ func NewManifestWorkController(
 		spokeDynamicClient:        spokeDynamicClient,
 		hubHash:                   hubHash,
 		restMapper:                restMapper,
-
-		appliers: apply.NewAppliers(spokeDynamicClient, spokeKubeClient, spokeAPIExtensionClient),
+		appliers:                  apply.NewAppliers(spokeDynamicClient, spokeKubeClient, spokeAPIExtensionClient),
+		validator:                 auth.NewExecutorValidator(spokeKubeClient, restMapper),
 	}
 
 	return factory.New().
@@ -125,6 +127,29 @@ func (m *ManifestWorkController) sync(ctx context.Context, controllerContext fac
 	if !found {
 		return nil
 	}
+
+	// Check the Executor subject permission
+	err = m.validator.Validate(ctx, manifestWork)
+	if err != nil {
+		if apierrors.IsForbidden(err) {
+			klog.Infof("check permission for work %s/%s failed %v", manifestWork.Namespace, manifestWorkName, err)
+			appliedCondition := metav1.Condition{
+				ObservedGeneration: manifestWork.Generation,
+				Type:               workapiv1.WorkApplied,
+				Status:             metav1.ConditionFalse,
+				Reason:             "ExecutorSubjectValidateFailed",
+				Message:            err.Error(),
+			}
+
+			meta.SetStatusCondition(&manifestWork.Status.Conditions, appliedCondition)
+
+			// update status of manifestwork. if this conflicts, try again later
+			_, err = m.manifestWorkClient.UpdateStatus(ctx, manifestWork, metav1.UpdateOptions{})
+			return err
+		}
+		return err
+	}
+
 	// Apply appliedManifestWork
 	appliedManifestWorkName := fmt.Sprintf("%s-%s", m.hubHash, manifestWork.Name)
 	appliedManifestWork, err := m.appliedManifestWorkLister.Get(appliedManifestWorkName)
