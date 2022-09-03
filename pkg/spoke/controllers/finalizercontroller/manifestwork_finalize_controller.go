@@ -68,14 +68,17 @@ func (m *ManifestWorkFinalizeController) sync(ctx context.Context, controllerCon
 	// Delete appliedmanifestwork if relating manfiestwork is not found or being deleted
 	switch {
 	case errors.IsNotFound(err):
-		err := m.deleteAppliedManifestWork(ctx, appliedManifestWorkName)
+		err := m.deleteAppliedManifestWork(ctx, appliedManifestWorkName, false)
 		if err != nil {
 			return err
 		}
 	case err != nil:
 		return err
 	case !manifestWork.DeletionTimestamp.IsZero():
-		err := m.deleteAppliedManifestWork(ctx, appliedManifestWorkName)
+		// delete the applied manifestwork, but orphan the dependent resources, we will
+		// check the executor subject permission before deleting these resources
+		orphanDependents := manifestWork.Spec.Executor != nil
+		err := m.deleteAppliedManifestWork(ctx, appliedManifestWorkName, orphanDependents)
 		if err != nil {
 			return err
 		}
@@ -113,7 +116,8 @@ func (m *ManifestWorkFinalizeController) sync(ctx context.Context, controllerCon
 	return nil
 }
 
-func (m *ManifestWorkFinalizeController) deleteAppliedManifestWork(ctx context.Context, appliedManifestWorkName string) error {
+func (m *ManifestWorkFinalizeController) deleteAppliedManifestWork(
+	ctx context.Context, appliedManifestWorkName string, orphanDependents bool) error {
 	appliedManifestWork, err := m.appliedManifestWorkLister.Get(appliedManifestWorkName)
 	switch {
 	case errors.IsNotFound(err):
@@ -124,5 +128,10 @@ func (m *ManifestWorkFinalizeController) deleteAppliedManifestWork(ctx context.C
 		return nil
 	}
 
-	return m.appliedManifestWorkClient.Delete(ctx, appliedManifestWorkName, metav1.DeleteOptions{})
+	deleteOption := metav1.DeleteOptions{}
+	if orphanDependents {
+		orphan := metav1.DeletePropagationOrphan
+		deleteOption.PropagationPolicy = &orphan
+	}
+	return m.appliedManifestWorkClient.Delete(ctx, appliedManifestWorkName, deleteOption)
 }

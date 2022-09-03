@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -16,12 +17,23 @@ import (
 	"open-cluster-management.io/work/pkg/helper"
 )
 
+// ExecuteAction is the action of executing the manifest work
+type ExecuteAction string
+
+const (
+	// ApplyAction represents applying(create/update) resource to the managed cluster
+	ApplyAction ExecuteAction = "Apply"
+	// DeleteAction represents deleting resource from the managed cluster
+	DeleteAction ExecuteAction = "Delete"
+)
+
 // ExecutorValidator validates whether the executor has permission to perform the requests
 // to the local managed cluster
 type ExecutorValidator interface {
-	// Validate whether the work executor subject has permission to perform, if there is no permission
-	// will return a kubernetes forbidden error.
-	Validate(ctx context.Context, work *workapiv1.ManifestWork) error
+	// Validate whether the work executor subject has permission to perform action on the specific manifest,
+	// if there is no permission will return a kubernetes forbidden error.
+	Validate(ctx context.Context, executor *workapiv1.ManifestWorkExecutor,
+		manifest workapiv1.Manifest, action ExecuteAction) error
 }
 
 func NewExecutorValidator(kubeClient kubernetes.Interface, restMapper meta.RESTMapper) ExecutorValidator {
@@ -36,46 +48,47 @@ type sarValidator struct {
 	kubeClient kubernetes.Interface
 }
 
-func (v *sarValidator) Validate(ctx context.Context, work *workapiv1.ManifestWork) error {
-	if work.Spec.Executor == nil {
+func (v *sarValidator) Validate(ctx context.Context, executor *workapiv1.ManifestWorkExecutor,
+	manifest workapiv1.Manifest, action ExecuteAction) error {
+	if executor == nil {
 		return nil
 	}
 
-	if work.Spec.Executor.Subject.Type != workapiv1.ExecutorSubjectTypeServiceAccount {
+	if executor.Subject.Type != workapiv1.ExecutorSubjectTypeServiceAccount {
 		return fmt.Errorf("only support %s type for the executor", workapiv1.ExecutorSubjectTypeServiceAccount)
 	}
 
-	sa := work.Spec.Executor.Subject.ServiceAccount
+	sa := executor.Subject.ServiceAccount
 	if sa == nil {
 		return fmt.Errorf("the executor service account is nil")
 	}
 
 	var views []string
-	if work.DeletionTimestamp.IsZero() {
+	switch action {
+	case ApplyAction:
 		views = []string{"create", "update", "patch", "get", "list"}
-	} else {
+	case DeleteAction:
 		views = []string{"delete"}
+	default:
+		return fmt.Errorf("execute action %s is invalid", action)
 	}
 
-	manifests := work.Spec.Workload.Manifests
-	for _, manifest := range manifests {
-		resource, err := v.analyseManifestResource(manifest)
-		if err != nil {
-			return err
-		}
+	resource, err := v.analyseManifestResource(manifest)
+	if err != nil {
+		return err
+	}
 
-		reviews := buildSubjectAccessReviews(sa.Namespace, sa.Name, resource, views...)
-		allowed, err := validateBySubjectAccessReviews(ctx, v.kubeClient, reviews)
-		if err != nil {
-			return err
-		}
+	reviews := buildSubjectAccessReviews(sa.Namespace, sa.Name, resource, views...)
+	allowed, err := validateBySubjectAccessReviews(ctx, v.kubeClient, reviews)
+	if err != nil {
+		return err
+	}
 
-		if !allowed {
-			return errors.NewForbidden(schema.GroupResource{
-				Group:    resource.Group,
-				Resource: resource.Resource,
-			}, resource.Name, fmt.Errorf("not allowed"))
-		}
+	if !allowed {
+		return errors.NewForbidden(schema.GroupResource{
+			Group:    resource.Group,
+			Resource: resource.Resource,
+		}, resource.Name, fmt.Errorf("not allowed to %s the resource", strings.ToLower(string(action))))
 	}
 
 	return nil

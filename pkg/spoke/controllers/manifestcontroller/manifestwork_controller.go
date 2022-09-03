@@ -128,28 +128,6 @@ func (m *ManifestWorkController) sync(ctx context.Context, controllerContext fac
 		return nil
 	}
 
-	// Check the Executor subject permission
-	err = m.validator.Validate(ctx, manifestWork)
-	if err != nil {
-		if apierrors.IsForbidden(err) {
-			klog.Infof("check permission for work %s/%s failed %v", manifestWork.Namespace, manifestWorkName, err)
-			appliedCondition := metav1.Condition{
-				ObservedGeneration: manifestWork.Generation,
-				Type:               workapiv1.WorkApplied,
-				Status:             metav1.ConditionFalse,
-				Reason:             "ExecutorSubjectValidateFailed",
-				Message:            err.Error(),
-			}
-
-			meta.SetStatusCondition(&manifestWork.Status.Conditions, appliedCondition)
-
-			// update status of manifestwork. if this conflicts, try again later
-			_, err = m.manifestWorkClient.UpdateStatus(ctx, manifestWork, metav1.UpdateOptions{})
-			return err
-		}
-		return err
-	}
-
 	// Apply appliedManifestWork
 	appliedManifestWorkName := fmt.Sprintf("%s-%s", m.hubHash, manifestWork.Name)
 	appliedManifestWork, err := m.appliedManifestWorkLister.Get(appliedManifestWorkName)
@@ -179,6 +157,9 @@ func (m *ManifestWorkController) sync(ctx context.Context, controllerContext fac
 	errs := []error{}
 	// Apply resources on spoke cluster.
 	resourceResults := make([]applyResult, len(manifestWork.Spec.Workload.Manifests))
+	// check the Executor subject permission before applying
+	resourceResults = m.validateManifests(ctx, manifestWork.Spec.Executor,
+		manifestWork.Spec.Workload.Manifests, resourceResults)
 	err = retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		resourceResults = m.applyManifests(
 			ctx, manifestWork.Spec.Workload.Manifests, manifestWork.Spec, controllerContext.Recorder(), *owner, resourceResults)
@@ -225,6 +206,26 @@ func (m *ManifestWorkController) sync(ctx context.Context, controllerContext fac
 		klog.Errorf("Reconcile work %s fails with err: %v", manifestWorkName, err)
 	}
 	return err
+}
+
+func (m *ManifestWorkController) validateManifests(
+	ctx context.Context,
+	executor *workapiv1.ManifestWorkExecutor,
+	manifests []workapiv1.Manifest,
+	existingResults []applyResult) []applyResult {
+
+	for index, manifest := range manifests {
+		existingResults[index].Error = m.validateOneManifest(ctx, executor, manifest)
+	}
+
+	return existingResults
+}
+
+func (m *ManifestWorkController) validateOneManifest(
+	ctx context.Context,
+	executor *workapiv1.ManifestWorkExecutor,
+	manifest workapiv1.Manifest) error {
+	return m.validator.Validate(ctx, executor, manifest, auth.ApplyAction)
 }
 
 func (m *ManifestWorkController) applyManifests(
