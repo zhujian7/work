@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	workv1client "open-cluster-management.io/api/client/work/clientset/versioned/typed/work/v1"
@@ -21,27 +22,34 @@ import (
 	workapiv1 "open-cluster-management.io/api/work/v1"
 	"open-cluster-management.io/work/pkg/helper"
 	"open-cluster-management.io/work/pkg/spoke/controllers"
+	spokehelper "open-cluster-management.io/work/pkg/spoke/helper"
 )
 
 // AppliedManifestWorkFinalizeController handles cleanup of appliedmanifestwork resources before deletion is allowed.
 type AppliedManifestWorkFinalizeController struct {
 	appliedManifestWorkClient workv1client.AppliedManifestWorkInterface
 	appliedManifestWorkLister worklister.AppliedManifestWorkLister
+	manifestWorkLister        worklister.ManifestWorkNamespaceLister
+	spokeKubeClient           kubernetes.Interface
 	spokeDynamicClient        dynamic.Interface
 	rateLimiter               workqueue.RateLimiter
 }
 
 func NewAppliedManifestWorkFinalizeController(
 	recorder events.Recorder,
+	spokeKubeClient kubernetes.Interface,
 	spokeDynamicClient dynamic.Interface,
 	appliedManifestWorkClient workv1client.AppliedManifestWorkInterface,
 	appliedManifestWorkInformer workinformer.AppliedManifestWorkInformer,
+	manifestWorkLister worklister.ManifestWorkNamespaceLister,
 	hubHash string,
 ) factory.Controller {
 
 	controller := &AppliedManifestWorkFinalizeController{
 		appliedManifestWorkClient: appliedManifestWorkClient,
 		appliedManifestWorkLister: appliedManifestWorkInformer.Lister(),
+		manifestWorkLister:        manifestWorkLister,
+		spokeKubeClient:           spokeKubeClient,
 		spokeDynamicClient:        spokeDynamicClient,
 		rateLimiter:               workqueue.NewItemExponentialFailureRateLimiter(5*time.Millisecond, 1000*time.Second),
 	}
@@ -56,7 +64,7 @@ func NewAppliedManifestWorkFinalizeController(
 
 func (m *AppliedManifestWorkFinalizeController) sync(ctx context.Context, controllerContext factory.SyncContext) error {
 	appliedManifestWorkName := controllerContext.QueueKey()
-	klog.V(4).Infof("Reconciling ManifestWork %q", appliedManifestWorkName)
+	klog.V(4).Infof("Reconciling AppliedManifestWork %q", appliedManifestWorkName)
 
 	appliedManifestWork, err := m.appliedManifestWorkLister.Get(appliedManifestWorkName)
 	if errors.IsNotFound(err) {
@@ -66,6 +74,7 @@ func (m *AppliedManifestWorkFinalizeController) sync(ctx context.Context, contro
 	if err != nil {
 		return err
 	}
+
 	return m.syncAppliedManifestWork(ctx, controllerContext, appliedManifestWork)
 }
 
@@ -96,12 +105,25 @@ func (m *AppliedManifestWorkFinalizeController) syncAppliedManifestWork(ctx cont
 
 	owner := helper.NewAppliedManifestWorkOwner(appliedManifestWork)
 
+	var executor *workapiv1.ManifestWorkExecutor
+	manifestWork, err := m.manifestWorkLister.Get(appliedManifestWork.Spec.ManifestWorkName)
+	switch {
+	case err == nil:
+		executor = manifestWork.Spec.Executor
+	case !errors.IsNotFound(err):
+		// if not found the manifest work, keep the executor nil, we will not
+		// check delete permission when executor is nil
+		return err
+	}
+
 	// Work is deleting, we remove its related resources on spoke cluster
 	// We still need to run delete for every resource even with ownerref on it, since ownerref does not handle cluster
 	// scoped resource correctly.
 	reason := fmt.Sprintf("manifestwork %s is terminating", appliedManifestWork.Spec.ManifestWorkName)
-	resourcesPendingFinalization, errs := helper.DeleteAppliedResources(
-		ctx, appliedManifestWork.Status.AppliedResources, reason, m.spokeDynamicClient, controllerContext.Recorder(), *owner)
+	resourcesPendingFinalization, errs := spokehelper.DeleteAppliedResources(
+		ctx, appliedManifestWork.Status.AppliedResources, reason, m.spokeDynamicClient,
+		controllerContext.Recorder(), *owner,
+		m.spokeKubeClient, executor)
 
 	updatedAppliedManifestWork := false
 	if len(appliedManifestWork.Status.AppliedResources) != len(resourcesPendingFinalization) {

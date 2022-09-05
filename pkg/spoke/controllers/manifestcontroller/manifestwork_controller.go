@@ -32,6 +32,7 @@ import (
 	"open-cluster-management.io/work/pkg/spoke/apply"
 	"open-cluster-management.io/work/pkg/spoke/auth"
 	"open-cluster-management.io/work/pkg/spoke/controllers"
+	spokehelper "open-cluster-management.io/work/pkg/spoke/helper"
 )
 
 var ResyncInterval = 5 * time.Minute
@@ -81,7 +82,7 @@ func NewManifestWorkController(
 		hubHash:                   hubHash,
 		restMapper:                restMapper,
 		appliers:                  apply.NewAppliers(spokeDynamicClient, spokeKubeClient, spokeAPIExtensionClient),
-		validator:                 auth.NewExecutorValidator(spokeKubeClient, restMapper),
+		validator:                 auth.NewExecutorValidator(spokeKubeClient),
 	}
 
 	return factory.New().
@@ -225,7 +226,7 @@ func (m *ManifestWorkController) validateOneManifest(
 	ctx context.Context,
 	executor *workapiv1.ManifestWorkExecutor,
 	manifest workapiv1.Manifest) error {
-	return m.validator.Validate(ctx, executor, manifest, auth.ApplyAction)
+	return m.validator.ValidateApply(ctx, m.restMapper, executor, manifest)
 }
 
 func (m *ManifestWorkController) applyManifests(
@@ -290,7 +291,7 @@ func (m *ManifestWorkController) applyOneManifest(
 
 	// patch the ownerref
 	if result.Error == nil {
-		result.Error = helper.ApplyOwnerReferences(ctx, m.spokeDynamicClient, gvr, result.Result, requiredOwner)
+		result.Error = spokehelper.ApplyOwnerReferences(ctx, m.spokeDynamicClient, gvr, result.Result, requiredOwner)
 	}
 
 	return result

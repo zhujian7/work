@@ -15,6 +15,7 @@ import (
 	clienttesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/util/workqueue"
 	fakeworkclient "open-cluster-management.io/api/client/work/clientset/versioned/fake"
+	workinformers "open-cluster-management.io/api/client/work/informers/externalversions"
 	workapiv1 "open-cluster-management.io/api/work/v1"
 	"open-cluster-management.io/work/pkg/helper"
 	"open-cluster-management.io/work/pkg/spoke/controllers"
@@ -187,10 +188,16 @@ func TestFinalize(t *testing.T) {
 			}
 			testingWork.Status.AppliedResources = append(testingWork.Status.AppliedResources, c.resourcesToRemove...)
 
-			fakeDynamicClient := fakedynamic.NewSimpleDynamicClient(runtime.NewScheme(), c.existingResources...)
 			fakeClient := fakeworkclient.NewSimpleClientset(testingWork)
+			informerFactory := workinformers.NewSharedInformerFactory(fakeClient, 5*time.Minute)
+			if err := informerFactory.Work().V1().ManifestWorks().Informer().GetStore().Add(testingWork); err != nil {
+				t.Fatal(err)
+			}
+
+			fakeDynamicClient := fakedynamic.NewSimpleDynamicClient(runtime.NewScheme(), c.existingResources...)
 			controller := AppliedManifestWorkFinalizeController{
 				appliedManifestWorkClient: fakeClient.WorkV1().AppliedManifestWorks(),
+				manifestWorkLister:        informerFactory.Work().V1().ManifestWorks().Lister().ManifestWorks("cluster1"),
 				spokeDynamicClient:        fakeDynamicClient,
 				rateLimiter:               workqueue.NewItemExponentialFailureRateLimiter(0, 1*time.Second),
 			}

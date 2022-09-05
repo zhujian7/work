@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
@@ -24,6 +25,7 @@ import (
 	worklister "open-cluster-management.io/api/client/work/listers/work/v1"
 	workapiv1 "open-cluster-management.io/api/work/v1"
 	"open-cluster-management.io/work/pkg/helper"
+	spokehelper "open-cluster-management.io/work/pkg/spoke/helper"
 )
 
 // AppliedManifestWorkController is to sync the applied resources of appliedmanifestwork with related
@@ -33,6 +35,7 @@ type AppliedManifestWorkController struct {
 	manifestWorkLister        worklister.ManifestWorkNamespaceLister
 	appliedManifestWorkClient workv1client.AppliedManifestWorkInterface
 	appliedManifestWorkLister worklister.AppliedManifestWorkLister
+	spokeKubeClient           kubernetes.Interface
 	spokeDynamicClient        dynamic.Interface
 	hubHash                   string
 	rateLimiter               workqueue.RateLimiter
@@ -41,6 +44,7 @@ type AppliedManifestWorkController struct {
 // NewAppliedManifestWorkController returns a AppliedManifestWorkController
 func NewAppliedManifestWorkController(
 	recorder events.Recorder,
+	spokeKubeClient kubernetes.Interface,
 	spokeDynamicClient dynamic.Interface,
 	manifestWorkClient workv1client.ManifestWorkInterface,
 	manifestWorkInformer workinformer.ManifestWorkInformer,
@@ -54,6 +58,7 @@ func NewAppliedManifestWorkController(
 		manifestWorkLister:        manifestWorkLister,
 		appliedManifestWorkClient: appliedManifestWorkClient,
 		appliedManifestWorkLister: appliedManifestWorkInformer.Lister(),
+		spokeKubeClient:           spokeKubeClient,
 		spokeDynamicClient:        spokeDynamicClient,
 		hubHash:                   hubHash,
 		rateLimiter:               workqueue.NewItemExponentialFailureRateLimiter(5*time.Millisecond, 1000*time.Second),
@@ -162,8 +167,9 @@ func (m *AppliedManifestWorkController) syncManifestWork(
 
 	reason := fmt.Sprintf("it is no longer maintained by manifestwork %s", manifestWork.Name)
 
-	resourcesPendingFinalization, errs := helper.DeleteAppliedResources(
-		ctx, noLongerMaintainedResources, reason, m.spokeDynamicClient, controllerContext.Recorder(), *owner)
+	resourcesPendingFinalization, errs := spokehelper.DeleteAppliedResources(
+		ctx, noLongerMaintainedResources, reason, m.spokeDynamicClient, controllerContext.Recorder(), *owner,
+		m.spokeKubeClient, manifestWork.Spec.Executor)
 	if len(errs) != 0 {
 		return utilerrors.NewAggregate(errs)
 	}

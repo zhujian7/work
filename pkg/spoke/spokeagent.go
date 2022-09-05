@@ -125,9 +125,11 @@ func (o *WorkloadAgentOptions) RunWorkloadAgent(ctx context.Context, controllerC
 	)
 	appliedManifestWorkFinalizeController := finalizercontroller.NewAppliedManifestWorkFinalizeController(
 		controllerContext.EventRecorder,
+		spokeKubeClient,
 		spokeDynamicClient,
 		spokeWorkClient.WorkV1().AppliedManifestWorks(),
 		spokeWorkInformerFactory.Work().V1().AppliedManifestWorks(),
+		workInformerFactory.Work().V1().ManifestWorks().Lister().ManifestWorks(o.SpokeClusterName),
 		hubhash,
 	)
 	manifestWorkFinalizeController := finalizercontroller.NewManifestWorkFinalizeController(
@@ -141,6 +143,7 @@ func (o *WorkloadAgentOptions) RunWorkloadAgent(ctx context.Context, controllerC
 	)
 	appliedManifestWorkController := appliedmanifestcontroller.NewAppliedManifestWorkController(
 		controllerContext.EventRecorder,
+		spokeKubeClient,
 		spokeDynamicClient,
 		hubWorkClient.WorkV1().ManifestWorks(o.SpokeClusterName),
 		workInformerFactory.Work().V1().ManifestWorks(),

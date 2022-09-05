@@ -3,7 +3,6 @@ package auth
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -30,26 +29,30 @@ const (
 // ExecutorValidator validates whether the executor has permission to perform the requests
 // to the local managed cluster
 type ExecutorValidator interface {
-	// Validate whether the work executor subject has permission to perform action on the specific manifest,
+	// ValidateApply check whether the work executor subject has permission to perform
+	// action("create", "update", "patch", "get", "list) on the specific manifest,
 	// if there is no permission will return a kubernetes forbidden error.
-	Validate(ctx context.Context, executor *workapiv1.ManifestWorkExecutor,
-		manifest workapiv1.Manifest, action ExecuteAction) error
+	ValidateApply(ctx context.Context, restMapper meta.RESTMapper, executor *workapiv1.ManifestWorkExecutor,
+		manifest workapiv1.Manifest) error
+
+	// ValidateApply check whether the work executor subject has permission to delete
+	// the specific manifest, if there is no permission will return a kubernetes forbidden error.
+	ValidateDelete(ctx context.Context, executor *workapiv1.ManifestWorkExecutor,
+		gvr schema.GroupVersionResource, namespace, name string) error
 }
 
-func NewExecutorValidator(kubeClient kubernetes.Interface, restMapper meta.RESTMapper) ExecutorValidator {
+func NewExecutorValidator(kubeClient kubernetes.Interface) ExecutorValidator {
 	return &sarValidator{
 		kubeClient: kubeClient,
-		restMapper: restMapper,
 	}
 }
 
 type sarValidator struct {
-	restMapper meta.RESTMapper
 	kubeClient kubernetes.Interface
 }
 
-func (v *sarValidator) Validate(ctx context.Context, executor *workapiv1.ManifestWorkExecutor,
-	manifest workapiv1.Manifest, action ExecuteAction) error {
+func (v *sarValidator) ValidateApply(ctx context.Context, restMapper meta.RESTMapper, executor *workapiv1.ManifestWorkExecutor,
+	manifest workapiv1.Manifest) error {
 	if executor == nil {
 		return nil
 	}
@@ -63,22 +66,14 @@ func (v *sarValidator) Validate(ctx context.Context, executor *workapiv1.Manifes
 		return fmt.Errorf("the executor service account is nil")
 	}
 
-	var views []string
-	switch action {
-	case ApplyAction:
-		views = []string{"create", "update", "patch", "get", "list"}
-	case DeleteAction:
-		views = []string{"delete"}
-	default:
-		return fmt.Errorf("execute action %s is invalid", action)
-	}
+	verbs := []string{"create", "update", "patch", "get", "list"}
 
-	resource, err := v.analyseManifestResource(manifest)
+	resource, err := v.analyseManifestResource(restMapper, manifest)
 	if err != nil {
 		return err
 	}
 
-	reviews := buildSubjectAccessReviews(sa.Namespace, sa.Name, resource, views...)
+	reviews := buildSubjectAccessReviews(sa.Namespace, sa.Name, resource, verbs...)
 	allowed, err := validateBySubjectAccessReviews(ctx, v.kubeClient, reviews)
 	if err != nil {
 		return err
@@ -88,13 +83,15 @@ func (v *sarValidator) Validate(ctx context.Context, executor *workapiv1.Manifes
 		return errors.NewForbidden(schema.GroupResource{
 			Group:    resource.Group,
 			Resource: resource.Resource,
-		}, resource.Name, fmt.Errorf("not allowed to %s the resource", strings.ToLower(string(action))))
+		}, resource.Name, fmt.Errorf("not allowed to apply the resource"))
 	}
 
 	return nil
 }
 
-func (v *sarValidator) analyseManifestResource(manifest workapiv1.Manifest) (authorizationv1.ResourceAttributes, error) {
+func (v *sarValidator) analyseManifestResource(
+	restMapper meta.RESTMapper, manifest workapiv1.Manifest) (authorizationv1.ResourceAttributes, error) {
+
 	resource := authorizationv1.ResourceAttributes{}
 	// parse the manifest
 	object := &unstructured.Unstructured{}
@@ -114,7 +111,7 @@ func (v *sarValidator) analyseManifestResource(manifest workapiv1.Manifest) (aut
 	resource.Group = gvk.Group
 	resource.Version = gvk.Version
 
-	mapping, err := v.restMapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+	mapping, err := restMapper.RESTMapping(gvk.GroupKind(), gvk.Version)
 	if err != nil {
 		return resource, fmt.Errorf("the server doesn't have a resource type %q", gvk.Kind)
 	}
@@ -166,4 +163,44 @@ func validateBySubjectAccessReviews(
 		}
 	}
 	return true, nil
+}
+
+func (v *sarValidator) ValidateDelete(ctx context.Context, executor *workapiv1.ManifestWorkExecutor,
+	gvr schema.GroupVersionResource, namespace, name string) error {
+	if executor == nil {
+		return nil
+	}
+
+	if executor.Subject.Type != workapiv1.ExecutorSubjectTypeServiceAccount {
+		return fmt.Errorf("only support %s type for the executor", workapiv1.ExecutorSubjectTypeServiceAccount)
+	}
+
+	sa := executor.Subject.ServiceAccount
+	if sa == nil {
+		return fmt.Errorf("the executor service account is nil")
+	}
+
+	verbs := []string{"delete"}
+	resource := authorizationv1.ResourceAttributes{
+		Namespace: namespace,
+		Name:      name,
+		Group:     gvr.Group,
+		Version:   gvr.Version,
+		Resource:  gvr.Resource,
+	}
+
+	reviews := buildSubjectAccessReviews(sa.Namespace, sa.Name, resource, verbs...)
+	allowed, err := validateBySubjectAccessReviews(ctx, v.kubeClient, reviews)
+	if err != nil {
+		return err
+	}
+
+	if !allowed {
+		return errors.NewForbidden(schema.GroupResource{
+			Group:    resource.Group,
+			Resource: resource.Resource,
+		}, resource.Name, fmt.Errorf("not allowed to delete the resource"))
+	}
+
+	return nil
 }
