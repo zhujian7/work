@@ -88,13 +88,23 @@ func NewManifestWorkController(
 		validator:                 validator,
 	}
 
+	manifestWorkControllerName := "ManifestWorkAgent"
+	syncCtx := factory.NewSyncContext(manifestWorkControllerName, recorder)
+
+	manifestWorkInformer.Informer().AddEventHandler(&manifestworkEventHandler{
+		enqueueFunc: func(name string) {
+			syncCtx.Queue().Add(name)
+		},
+	})
 	return factory.New().
-		WithInformersQueueKeyFunc(func(obj runtime.Object) string {
-			accessor, _ := meta.Accessor(obj)
-			return accessor.GetName()
-		}, manifestWorkInformer.Informer()).
+		WithSyncContext(syncCtx).
+		// Use the bare manifestwork informer to filter the spec unchanged updated Event
+		WithBareInformers(manifestWorkInformer.Informer()).
+		// We do not need to set the extra ResyncEvery 5 minutes here, since the appliedManifestWorkInformer
+		// will resync every 5 minutes, which will trigger the Reconcile
 		WithInformersQueueKeyFunc(helper.AppliedManifestworkQueueKeyFunc(hubHash), appliedManifestWorkInformer.Informer()).
-		WithSync(controller.sync).ResyncEvery(ResyncInterval).ToController("ManifestWorkAgent", recorder)
+		WithSync(controller.sync).
+		ToController(manifestWorkControllerName, recorder)
 }
 
 // sync is the main reconcile loop for manifest work. It is triggered in two scenarios
