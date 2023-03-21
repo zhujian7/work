@@ -2,11 +2,15 @@
 namespace: open-cluster-management-hub
 
 resources:
-- ./placemanifestworks.crd.yaml
+- ./manifestworkreplicasets.crd.yaml
 - ./manifestworks.crd.yaml
+- ./placements.crd.yaml
+- ./placementdecisions.crd.yaml
 - ./component_namespace.yaml
 - ./clusterrole_binding.yaml
 - ./clusterrole.yaml
+- ./role.yaml
+- ./role_binding.yaml
 - ./manager_deployment.yaml
 - ./webhook_deployment.yaml
 - ./service_account.yaml
