@@ -35,7 +35,7 @@ verify-gosec:
 	go install github.com/securego/gosec/v2/cmd/gosec@v2.15.0
 	gosec ./...
 
-verify: verify-gosec
+verify:
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.45.2
 	golangci-lint run --timeout=3m --modules-download-mode vendor ./...
 

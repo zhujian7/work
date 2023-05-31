@@ -102,6 +102,15 @@ func (m *AppliedManifestWorkController) sync(ctx context.Context, controllerCont
 		return nil
 	}
 
+	// In a case where a managed cluster switches to a new hub with the same hub hash, the same manifestworks
+	// will be created for this cluster on the new hub without any condition. Once the work agent connects to
+	// the new hub, the applied resources of those manifestwork on this managed cluster should not be removed
+	// before the manifestworks are applied the first time.
+	if appliedCondition := meta.FindStatusCondition(manifestWork.Status.Conditions, workapiv1.WorkApplied); appliedCondition == nil {
+		// if the manifestwork has not been applied on the managed cluster yet, do nothing
+		return nil
+	}
+
 	return m.syncManifestWork(ctx, controllerContext, manifestWork, appliedManifestWork)
 }
 
