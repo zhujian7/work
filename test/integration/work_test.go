@@ -69,11 +69,28 @@ var _ = ginkgo.Describe("ManifestWork", func() {
 	})
 
 	ginkgo.AfterEach(func() {
+		err = hubWorkClient.WorkV1().ManifestWorks(o.SpokeClusterName).Delete(context.Background(), work.Name, metav1.DeleteOptions{})
+		if !errors.IsNotFound(err) {
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		}
+
+		gomega.Eventually(func() error {
+			_, err := hubWorkClient.WorkV1().ManifestWorks(o.SpokeClusterName).Get(context.Background(), work.Name, metav1.GetOptions{})
+			if errors.IsNotFound(err) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("work %s in namespace %s still exists", work.Name, o.SpokeClusterName)
+		}, eventuallyTimeout, eventuallyInterval).Should(gomega.Succeed())
+
+		err := spokeKubeClient.CoreV1().Namespaces().Delete(context.Background(), o.SpokeClusterName, metav1.DeleteOptions{})
+		gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
 		if cancel != nil {
 			cancel()
 		}
-		err := spokeKubeClient.CoreV1().Namespaces().Delete(context.Background(), o.SpokeClusterName, metav1.DeleteOptions{})
-		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 	})
 
 	ginkgo.Context("With a single manifest", func() {
@@ -408,7 +425,6 @@ var _ = ginkgo.Describe("ManifestWork", func() {
 					if err != nil {
 						return err
 					}
-
 					return fmt.Errorf("the resource %s/%s still exists", namespaces[i], names[i])
 				}
 
@@ -591,6 +607,11 @@ var _ = ginkgo.Describe("ManifestWork", func() {
 			}
 		})
 
+		ginkgo.AfterEach(func() {
+			err = util.RemoveConfigmapFinalizers(spokeKubeClient, o.SpokeClusterName, "cm1", "cm2", "cm3")
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+
 		ginkgo.It("should remove applied resource for stale manifest from list once the resource is gone", func() {
 			util.AssertExistenceOfConfigMaps(manifests, spokeKubeClient, eventuallyTimeout, eventuallyInterval)
 
@@ -613,12 +634,8 @@ var _ = ginkgo.Describe("ManifestWork", func() {
 			// remove finalizer from the applied resources for stale manifest after 2 seconds
 			go func() {
 				time.Sleep(2 * time.Second)
-				cm := manifests[0].Object.(*corev1.ConfigMap)
-				cm, err := spokeKubeClient.CoreV1().ConfigMaps(cm.Namespace).Get(context.Background(), cm.Name, metav1.GetOptions{})
-				if err == nil {
-					cm.Finalizers = nil
-					_, _ = spokeKubeClient.CoreV1().ConfigMaps(cm.Namespace).Update(context.Background(), cm, metav1.UpdateOptions{})
-				}
+				// remove finalizers of cm1
+				_ = util.RemoveConfigmapFinalizers(spokeKubeClient, o.SpokeClusterName, "cm1")
 			}()
 
 			// check if resource created by stale manifest is deleted once it is removed from applied resource list

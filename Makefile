@@ -33,6 +33,10 @@ PWD=$(shell pwd)
 # It will generate target "image-$(1)" for builing the image an binding it as a prerequisite to target "images".
 $(call build-image,work,$(IMAGE_REGISTRY)/work:$(IMAGE_TAG),./Dockerfile,.)
 
+verify-gosec:
+	go install github.com/securego/gosec/v2/cmd/gosec@v2.15.0
+	gosec ./...
+
 verify:
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.45.2
 	golangci-lint run --timeout=3m --modules-download-mode vendor ./...
