@@ -56,7 +56,7 @@ func NewWorkloadAgentOptions() *WorkloadAgentOptions {
 		QPS:                                    50,
 		Burst:                                  100,
 		StatusSyncInterval:                     10 * time.Second,
-		AppliedManifestWorkEvictionGracePeriod: 10 * time.Minute,
+		AppliedManifestWorkEvictionGracePeriod: 60 * time.Minute,
 	}
 }
 
